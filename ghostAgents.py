@@ -81,49 +81,142 @@ class DirectionalGhost( GhostAgent ):
         return dist
 
 
-class Auctioneer():
+class AuctionSystem(object):
+    _instance = None
 
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(AuctionSystem, cls).__new__(cls)
+            cls._instance.bidqueue = None
+            cls._instance.bidwinner = None
+            print "new instance"
+        return cls._instance
+    
     def __init__(self):
-        self.bidqueue = None
-        self.bidwinner = None
+        #self.bidqueue = None
+        #self.bidwinner = None
+        pass
     
     def startAuction(self):
         self.bidqueue = util.PriorityQueue()
     
-    def addBid(self, ghost, bid):
+    def addBid(self, bidder, bid):
         if self.bidqueue is not None:
-            self.bidqueue.push(ghost, bid)
+            self.bidqueue.push(bidder, bid)
     
     def endAuction(self):
-        self.bidwinner = self.bidqueue.pop()
+        self.bidwinner = self.bidqueue.pop() # lowest bid wins
         self.bidqueue = None
     
     def getWinner(self):
         return self.bidwinner
+    
+    def isActive(self):
+        return self.bidqueue is not None
 
 
 
 auctioneer = None
 
 class AuctionAgent(GhostAgent):
-    def __init__(self, index):
+    def __init__(self, index, loiter_distance=5):
         self.index = index
         global auctioneer
-        if auctioneer is None:
-            auctioneer = Auctioneer()
+        auctioneer = AuctionSystem()
+        self.loiter_distance = loiter_distance
+        self.isLoitering = False
+        self.loiterPath = []
+
 
     def getAction(self, state):
+        if len(self.loiterPath) <= 1: self.isLoitering = False
+
         if auctioneer.bidqueue is None:
             auctioneer.startAuction()
         
-        auctioneer.addBid(self, manhattanDistance(state.getGhostPosition(self.index), state.getPacmanPosition()))
+        auctioneer.addBid(self, manhattanDistance(state.getGhostPosition(self.index), state.getPacmanPosition())) # bids the current manhattan distance
 
         if (auctioneer.bidqueue.count >= state.getNumAgents()-1):
             auctioneer.endAuction()
         
         if auctioneer.getWinner() is self:
-            actions = state.getLegalActions(self.index)
-            distances = {action: (manhattanDistance(state.getPacmanPosition(), (state.getGhostPosition(self.index)[0]+Actions._directions[action][0],state.getGhostPosition(self.index)[1]+Actions._directions[action][1]))) for action in actions}
-            return min(distances, key=distances.get)
+            self.isLoitering = False
+            pathToPacman = self.aStar(state.getGhostPosition(self.index), state.getPacmanPosition(), state)
+            return Actions.vectorToDirection((pathToPacman[1][0]-pathToPacman[0][0], pathToPacman[1][1]-pathToPacman[0][1]))
         else:
-            return Directions.STOP
+            if not self.isLoitering:
+                currentPos = state.getGhostPosition(self.index)
+                currentPos = (int(currentPos[0]), int(currentPos[1]))
+                possiblePositions = [(self.loiter_distance*x+currentPos[0], self.loiter_distance*y+currentPos[1]) for x,y in Actions._directions.values() if (x,y) != (0,0)]
+                loiterPos = random.choice(possiblePositions)
+                for position in possiblePositions:
+                    if position[0] < state.getWalls().width and position[1] < state.getWalls().height and state.getWalls()[position[0]][position[1]] == False and position[0] >= 0 and position[1] >= 0:
+                        loiterPos = position
+                assert loiterPos is not None
+                print "loiterpos=" + str(loiterPos) + "Currentpos" + str(currentPos)
+                path = self.aStar(currentPos, loiterPos, state)
+                print path
+                self.loiterPath = path + path[::-1]
+                self.isLoitering = True
+            print len(self.loiterPath)
+            nextAction = Actions.vectorToDirection((self.loiterPath[1][0]-self.loiterPath[0][0], self.loiterPath[1][1]-self.loiterPath[0][1]))
+            self.loiterPath.pop(0)
+            print nextAction
+            return nextAction
+
+
+
+
+    def aStar(self, pos1, pos2, state):
+        openList = []
+        closedList = []
+        f = {}
+        g = {}
+        parent = {}
+        openList.append(pos1)
+        f[pos1] = 0
+        g[pos1] = 0
+
+        while openList:
+            #pop current pos
+            currentNode = openList[0]
+            for node in openList:
+                if f[node] < f [currentNode]:
+                    currentNode = node
+            
+            openList.remove(currentNode)
+            closedList.append(currentNode)
+
+            if currentNode == pos2:
+                backwardPath = []
+                node = currentNode
+                while node is not None:
+                    backwardPath.append(node)
+                    try:
+                        node = parent[node]
+                    except KeyError:
+                        break
+                return backwardPath[::-1]
+
+            nextNodes = Actions.getLegalNeighbors(currentNode, state.getWalls())
+
+            for node in nextNodes:
+                if node in closedList: 
+                    continue
+                
+                g_ = g[currentNode] + 1
+                h_ = manhattanDistance(node, pos2)
+                f_ = g_ + h_
+
+                if node in openList:
+                    if g_ < g[node]:
+                        g[node] = g_
+                        parent[node] = currentNode
+                        f[node] = f_
+                else:
+                    g[node] = g_    
+                    parent[node] = currentNode
+                    f[node] = f_
+                    openList.append(node)
+
+

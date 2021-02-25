@@ -382,7 +382,7 @@ class GhostRules:
     """
     These functions dictate how ghosts interact with their environment.
     """
-    GHOST_SPEED=1.0
+    GHOST_SPEED=0.5
     def getLegalActions( state, ghostIndex ):
         """
         Ghosts cannot stop, and cannot turn around unless they
